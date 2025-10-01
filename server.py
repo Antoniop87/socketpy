@@ -6,6 +6,9 @@ import base64
 from datetime import datetime
 import hashlib
 
+# Flask para a opção HTTP
+from flask import Flask, request, jsonify
+
 HOST = "127.0.0.1"
 PORT = 65432
 DB_PARAMS = {
@@ -15,8 +18,6 @@ DB_PARAMS = {
     "host": "localhost",
     "port": 5432,
 }
-
-
 
 
 def get_db_connection():
@@ -36,12 +37,9 @@ def calc_md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
-
-
 def process_request(request, is_udp=False, addr=None, udp_socket=None):
     action = request.get("action")
 
-    
     if action == "register":
         username = request["username"]
         password = request["password"]
@@ -70,7 +68,6 @@ def process_request(request, is_udp=False, addr=None, udp_socket=None):
         else:
             response = {"status": "error", "message": "Falha na conexão com DB."}
 
-    
     elif action == "login":
         username = request["username"]
         password = request["password"]
@@ -95,14 +92,20 @@ def process_request(request, is_udp=False, addr=None, udp_socket=None):
         else:
             response = {"status": "error", "message": "Falha na conexão com DB."}
 
-    
     elif action == "upload":
         username = request["username"]
         file_data_base64 = request["file_data"]
         file_type = request["file_type"]
-        checksum_client = request["checksum"]
+        checksum_client = request.get("checksum", "")
 
-        file_data = base64.b64decode(file_data_base64)
+        try:
+            file_data = base64.b64decode(file_data_base64)
+        except Exception as e:
+            response = {"status": "error", "message": f"Base64 inválido: {e}"}
+            if is_udp and udp_socket and addr:
+                udp_socket.sendto(json.dumps(response).encode("utf-8"), addr)
+            return response
+
         checksum_server = calc_md5(file_data)
 
         if checksum_client != checksum_server:
@@ -129,7 +132,6 @@ def process_request(request, is_udp=False, addr=None, udp_socket=None):
             else:
                 response = {"status": "error", "message": "Falha na conexão com DB."}
 
-    
     elif action == "list_data":
         db_conn = get_db_connection()
         if db_conn:
@@ -159,7 +161,6 @@ def process_request(request, is_udp=False, addr=None, udp_socket=None):
         else:
             response = {"status": "error", "message": "Falha na conexão com DB."}
 
-    
     elif action == "download":
         file_id = request["id"]
         db_conn = get_db_connection()
@@ -196,12 +197,13 @@ def process_request(request, is_udp=False, addr=None, udp_socket=None):
     else:
         response = {"status": "error", "message": "Ação inválida."}
 
-    
+    # Se for UDP, envia a resposta pelo socket (addr)
     if is_udp and udp_socket and addr:
-        udp_socket.sendto(json.dumps(response).encode("utf-8"), addr)
+        try:
+            udp_socket.sendto(json.dumps(response).encode("utf-8"), addr)
+        except Exception as e:
+            print(f"Erro ao enviar resposta UDP para {addr}: {e}")
     return response
-
-
 
 
 def handle_client(conn, addr):
@@ -225,6 +227,7 @@ def handle_client(conn, addr):
     finally:
         conn.close()
 
+
 def start_tcp():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
@@ -235,8 +238,6 @@ def start_tcp():
             threading.Thread(target=handle_client, args=(conn, addr)).start()
 
 
-
-
 def start_udp():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind((HOST, PORT))
@@ -245,18 +246,49 @@ def start_udp():
             data, addr = s.recvfrom(65535)
             try:
                 request = json.loads(data.decode("utf-8"))
-                process_request(request, is_udp=True, addr=addr, udp_socket=s)
+                # Processa em thread para não bloquear o loop UDP (bom para DB)
+                threading.Thread(target=process_request, args=(request, True, addr, s)).start()
             except Exception as e:
                 print(f"Erro ao processar requisição UDP: {e}")
 
 
+# ===========================
+# HTTP (Flask)
+# ===========================
+app = Flask(__name__)
+
+@app.route("/api", methods=["POST"])
+def api_endpoint():
+    try:
+        request_json = request.get_json(force=True)
+    except Exception as e:
+        return jsonify({"status": "error", "message": "JSON inválido", "error": str(e)}), 400
+
+    # chama process_request (não é UDP)
+    response = process_request(request_json)
+    return jsonify(response)
+
+
+def start_http():
+    # roda o Flask; threaded=True permite múltiplos requests simultâneos
+    print(f"Servidor HTTP (Flask) ouvindo em http://{HOST}:{PORT}/api")
+    # desabilite debug em produção
+    app.run(host=HOST, port=PORT, threaded=True)
 
 
 if __name__ == "__main__":
-    mode = input("Escolha protocolo (tcp/udp): ").strip().lower()
+    mode = input("Escolha protocolo (tcp/udp/http): ").strip().lower()
     if mode == "tcp":
         start_tcp()
     elif mode == "udp":
         start_udp()
+    elif mode == "http":
+        # verificação prática: requer Flask instalado
+        try:
+            # start_http vai bloquear aqui
+            start_http()
+        except Exception as e:
+            print("Erro ao iniciar servidor HTTP:", e)
+            print("Verifique se Flask está instalado (pip install flask).")
     else:
         print("Protocolo inválido.")

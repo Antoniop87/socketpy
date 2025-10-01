@@ -11,4 +11,8 @@ CREATE TABLE IF NOT EXISTS submissions (
     file_data BYTEA NOT NULL,
     file_type VARCHAR(50) NOT NULL,
     submission_date TIMESTAMP NOT NULL
+<<<<<<< HEAD
 );
+=======
+);
+>>>>>>> 7bdf40907ebd603542c9d2a2acfb7997cbecdc22

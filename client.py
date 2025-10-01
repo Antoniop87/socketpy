@@ -6,26 +6,33 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import hashlib
 
+# para HTTP com stdlib
+import urllib.request
+import urllib.error
+from urllib.parse import urlencode
+
 HOST = "127.0.0.1"
 PORT = 65432
 
 selected_file_path = None
 selected_file_name = None
 current_user = None
-protocol = None  
+protocol = None  # "tcp", "udp" ou "http"
 
 def calc_md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
-
-
-
+# ===============================
+# Comunicação com servidor
+# ===============================
 def send_request(action, data):
     try:
         message = {"action": action, **data}
         encoded = json.dumps(message).encode("utf-8")
+        response = None
 
         if protocol == "tcp":
+            # Lógica TCP (já existente)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((HOST, PORT))
                 s.sendall(encoded)
@@ -37,24 +44,65 @@ def send_request(action, data):
                         break
                     full_data += packet
                     try:
+                        # Tenta decodificar o JSON para checar se a mensagem terminou
                         response = json.loads(full_data.decode("utf-8"))
                         return response
-                    except:
+                    except json.JSONDecodeError:
                         continue
+                if response is None:
+                    raise Exception("Resposta TCP incompleta ou vazia.")
+
 
         elif protocol == "udp":
+            # Lógica UDP (já existente)
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(20) # Define um timeout para o UDP
                 s.sendto(encoded, (HOST, PORT))
                 data, _ = s.recvfrom(65535)
                 response = json.loads(data.decode("utf-8"))
                 return response
 
+        
+        elif protocol == "http":
+            # Lógica HTTP (NOVA)
+            url = f"http://{HOST}:{PORT}/api"
+            # Cria a requisição POST com o JSON no corpo
+            req = urllib.request.Request(
+                url, 
+                data=encoded, 
+                headers={"Content-Type": "application/json"}, 
+                method="POST"
+            )
+            
+            try:
+                # O servidor Flask já deve estar rodando na porta e endpoint especificados
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    resp_data = resp.read()
+                    response = json.loads(resp_data.decode("utf-8"))
+                    return response
+            except urllib.error.HTTPError as he:
+                # Captura erros HTTP (ex: 400 Bad Request, 500 Internal Server Error)
+                try:
+                    # Tenta ler e decodificar a resposta de erro do servidor
+                    err_data = he.read().decode("utf-8")
+                    return json.loads(err_data)
+                except:
+                    # Falha ao decodificar a mensagem de erro
+                    return {"status": "error", "message": f"Erro HTTP {he.code}: Falha ao processar a resposta de erro."}
+            except Exception as e:
+                messagebox.showerror("Erro de Conexão", f"Erro HTTP: {e}")
+                return {"status": "error", "message": "Erro de conexão HTTP."}
+
     except Exception as e:
         messagebox.showerror("Erro de Conexão", f"Não foi possível conectar ao servidor: {e}")
         return {"status": "error", "message": "Erro de conexão."}
 
-
-
+# ===============================
+# Lógica do cliente (GUI handlers)
+# ===============================
+# ... (O resto da sua lógica de GUI: try_login, try_register, send_data, 
+# fetch_data, select_file, download_file, show_login_frame, show_main_frame)
+# Não é necessário modificar essas funções, pois elas chamam send_request.
 
 def try_login():
     global current_user
@@ -62,12 +110,12 @@ def try_login():
     password = entry_login_pass.get()
 
     response = send_request("login", {"username": username, "password": password})
-    if response["status"] == "success":
+    if response.get("status") == "success":
         current_user = username
         show_main_frame()
-        messagebox.showinfo("Sucesso", response["message"])
+        messagebox.showinfo("Sucesso", response.get("message", "OK"))
     else:
-        messagebox.showerror("Erro de Login", response["message"])
+        messagebox.showerror("Erro de Login", response.get("message", "Erro desconhecido."))
 
 def try_register():
     username = entry_register_user.get()
@@ -78,11 +126,11 @@ def try_register():
         return
 
     response = send_request("register", {"username": username, "password": password})
-    if response["status"] == "success":
-        messagebox.showinfo("Sucesso", response["message"])
+    if response.get("status") == "success":
+        messagebox.showinfo("Sucesso", response.get("message", "OK"))
         show_login_frame()
     else:
-        messagebox.showerror("Erro de Registro", response["message"])
+        messagebox.showerror("Erro de Registro", response.get("message", "Erro desconhecido."))
 
 def send_data():
     global selected_file_path
@@ -104,11 +152,11 @@ def send_data():
         }
 
         response = send_request("upload", message)
-        if response["status"] == "success":
-            messagebox.showinfo("Sucesso", response["message"])
+        if response.get("status") == "success":
+            messagebox.showinfo("Sucesso", response.get("message", "OK"))
             fetch_data()
         else:
-            messagebox.showerror("Erro de Envio", response["message"])
+            messagebox.showerror("Erro de Envio", response.get("message", "Erro desconhecido."))
     except Exception as e:
         messagebox.showerror("Erro", f"Erro ao enviar dados: {e}")
 
@@ -143,7 +191,7 @@ def download_file():
     file_id = item_values[0]
 
     response = send_request("download", {"id": file_id})
-    if response["status"] == "success":
+    if response.get("status") == "success":
         file_data_base64 = response["file_data"]
         sender_name = response["name"]
         file_type = response["file_type"]
@@ -166,17 +214,26 @@ def download_file():
     else:
         messagebox.showerror("Erro", response.get("message", "Erro desconhecido."))
 
+def show_login_frame():
+    main_frame.pack_forget()
+    login_frame.pack(fill="both", expand=True)
 
+def show_main_frame():
+    login_frame.pack_forget()
+    main_frame.pack(fill="both", expand=True)
+    fetch_data()
 
-
-protocol = input("Escolha protocolo (tcp/udp): ").strip().lower()
-if protocol not in ["tcp", "udp"]:
+# ===============================
+# Escolher protocolo ANTES da GUI
+# ===============================
+protocol = input("Escolha protocolo (tcp/udp/http): ").strip().lower()
+if protocol not in ["tcp", "udp", "http"]:
     print("Protocolo inválido, saindo...")
     exit(1)
 
-
-
-
+# ===============================
+# GUI (inicia só depois da escolha)
+# ===============================
 root = tk.Tk()
 root.title(f"Cliente {protocol.upper()} - Autenticação e Envio")
 root.geometry("800x600")
@@ -240,15 +297,6 @@ tree.column("sender", width=200)
 tree.column("file_type", width=150)
 tree.column("date", width=200)
 tree.pack(fill="both", expand=True)
-
-def show_login_frame():
-    main_frame.pack_forget()
-    login_frame.pack(fill="both", expand=True)
-
-def show_main_frame():
-    login_frame.pack_forget()
-    main_frame.pack(fill="both", expand=True)
-    fetch_data()
 
 show_login_frame()
 root.mainloop()
