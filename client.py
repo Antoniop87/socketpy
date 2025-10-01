@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import hashlib
 
-# para HTTP com stdlib
+
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
@@ -17,14 +17,14 @@ PORT = 65432
 selected_file_path = None
 selected_file_name = None
 current_user = None
-protocol = None  # "tcp", "udp" ou "http"
+protocol = None  
 
 def calc_md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
-# ===============================
-# Comunicação com servidor
-# ===============================
+
+
+
 def send_request(action, data):
     try:
         message = {"action": action, **data}
@@ -32,7 +32,7 @@ def send_request(action, data):
         response = None
 
         if protocol == "tcp":
-            # Lógica TCP (já existente)
+            
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((HOST, PORT))
                 s.sendall(encoded)
@@ -44,7 +44,7 @@ def send_request(action, data):
                         break
                     full_data += packet
                     try:
-                        # Tenta decodificar o JSON para checar se a mensagem terminou
+                        
                         response = json.loads(full_data.decode("utf-8"))
                         return response
                     except json.JSONDecodeError:
@@ -54,9 +54,9 @@ def send_request(action, data):
 
 
         elif protocol == "udp":
-            # Lógica UDP (já existente)
+            
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.settimeout(20) # Define um timeout para o UDP
+                s.settimeout(20) 
                 s.sendto(encoded, (HOST, PORT))
                 data, _ = s.recvfrom(65535)
                 response = json.loads(data.decode("utf-8"))
@@ -64,9 +64,9 @@ def send_request(action, data):
 
         
         elif protocol == "http":
-            # Lógica HTTP (NOVA)
+            
             url = f"http://{HOST}:{PORT}/api"
-            # Cria a requisição POST com o JSON no corpo
+            
             req = urllib.request.Request(
                 url, 
                 data=encoded, 
@@ -75,19 +75,19 @@ def send_request(action, data):
             )
             
             try:
-                # O servidor Flask já deve estar rodando na porta e endpoint especificados
+                
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     resp_data = resp.read()
                     response = json.loads(resp_data.decode("utf-8"))
                     return response
             except urllib.error.HTTPError as he:
-                # Captura erros HTTP (ex: 400 Bad Request, 500 Internal Server Error)
+                
                 try:
-                    # Tenta ler e decodificar a resposta de erro do servidor
+                    
                     err_data = he.read().decode("utf-8")
                     return json.loads(err_data)
                 except:
-                    # Falha ao decodificar a mensagem de erro
+                    
                     return {"status": "error", "message": f"Erro HTTP {he.code}: Falha ao processar a resposta de erro."}
             except Exception as e:
                 messagebox.showerror("Erro de Conexão", f"Erro HTTP: {e}")
@@ -97,12 +97,12 @@ def send_request(action, data):
         messagebox.showerror("Erro de Conexão", f"Não foi possível conectar ao servidor: {e}")
         return {"status": "error", "message": "Erro de conexão."}
 
-# ===============================
-# Lógica do cliente (GUI handlers)
-# ===============================
-# ... (O resto da sua lógica de GUI: try_login, try_register, send_data, 
-# fetch_data, select_file, download_file, show_login_frame, show_main_frame)
-# Não é necessário modificar essas funções, pois elas chamam send_request.
+
+
+
+
+
+
 
 def try_login():
     global current_user
@@ -223,17 +223,17 @@ def show_main_frame():
     main_frame.pack(fill="both", expand=True)
     fetch_data()
 
-# ===============================
-# Escolher protocolo ANTES da GUI
-# ===============================
+
+
+
 protocol = input("Escolha protocolo (tcp/udp/http): ").strip().lower()
 if protocol not in ["tcp", "udp", "http"]:
     print("Protocolo inválido, saindo...")
     exit(1)
 
-# ===============================
-# GUI (inicia só depois da escolha)
-# ===============================
+
+
+
 root = tk.Tk()
 root.title(f"Cliente {protocol.upper()} - Autenticação e Envio")
 root.geometry("800x600")
